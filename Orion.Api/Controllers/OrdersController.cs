@@ -1,11 +1,17 @@
+using Hangfire;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore; // Make sure this is included
 using Orion.Api.Data;
 using Orion.Api.Models;
+using Orion.Api.Services;
 
 namespace Orion.Api.Controllers;
 
-// DTO to represent the incoming request payload
 public record CreateOrderRequest(string CustomerName, decimal TotalAmount);
+
+// New DTO for the status response
+public record OrderStatusResponse(int OrderId, string Status, DateTime CreatedAt);
+
 
 [ApiController]
 [Route("api/[controller]")]
@@ -13,87 +19,88 @@ public class OrdersController : ControllerBase
 {
     private readonly OrionDbContext _dbContext;
     private readonly ILogger<OrdersController> _logger;
+    private readonly IBackgroundJobClient _backgroundJobClient;
 
-    public OrdersController(OrionDbContext dbContext, ILogger<OrdersController> logger)
+    public OrdersController(
+        OrionDbContext dbContext,
+        ILogger<OrdersController> logger,
+        IBackgroundJobClient backgroundJobClient)
     {
         _dbContext = dbContext;
         _logger = logger;
+        _backgroundJobClient = backgroundJobClient;
     }
 
-    [HttpPost("slow")]
-    public async Task<IActionResult> CreateOrderSlow([FromBody] CreateOrderRequest request)
+    // --- NEW METHOD ---
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetOrder(int id)
     {
-        _logger.LogInformation("Starting SLOW order creation for {Customer}", request.CustomerName);
+        var order = await _dbContext.Orders
+            .AsNoTracking() // Use AsNoTracking for read-only queries for better performance
+            .FirstOrDefaultAsync(o => o.Id == id);
 
-        // --- Start of the slow and problematic work ---
+        if (order == null)
+        {
+            return NotFound();
+        }
 
-        // 1. Simulate calling a slow payment gateway API (e.g., 3 seconds)
-        _logger.LogInformation("Processing payment...");
-        await Task.Delay(3000);
-        _logger.LogInformation("Payment processed.");
+        var response = new OrderStatusResponse(
+            order.Id,
+            order.Status.ToString(), // Convert enum to string for clean JSON
+            order.CreatedAt
+        );
 
-        // 2. Simulate updating inventory (DB work)
-        _logger.LogInformation("Updating inventory...");
-        await Task.Delay(500);
-        _logger.LogInformation("Inventory updated.");
+        return Ok(response);
+    }
+    // --- END OF NEW METHOD ---
 
-        // 3. Save the order to our database
+
+    [HttpPost("fast")]
+    public async Task<IActionResult> CreateOrderFast([FromBody] CreateOrderRequest request)
+    {
+        _logger.LogInformation("Starting FAST order creation for {Customer}", request.CustomerName);
+
         var order = new Order
         {
             CustomerName = request.CustomerName,
             TotalAmount = request.TotalAmount,
+            Status = OrderStatus.Pending,
             CreatedAt = DateTime.UtcNow
         };
+
         _dbContext.Orders.Add(order);
         await _dbContext.SaveChangesAsync();
-        _logger.LogInformation("Order saved to database with ID {OrderId}", order.Id);
+        _logger.LogInformation("Order saved to DB with ID {OrderId}. Enqueuing background job.", order.Id);
+        
+        _backgroundJobClient.Enqueue<IOrderProcessingService>(service => service.ProcessOrder(order.Id));
+        
+        _logger.LogInformation("API request finished in milliseconds.");
 
-        // 4. Simulate calling a slow email service API (e.g., 2 seconds)
-        _logger.LogInformation("Sending confirmation email...");
-        await Task.Delay(2000);
-        _logger.LogInformation("Confirmation email sent.");
-
-        // --- End of the slow work ---
-
-        return CreatedAtAction(nameof(CreateOrderSlow), new { id = order.Id }, order);
+        // We now return the URL to the new status endpoint in the 'Location' header
+        return AcceptedAtAction(nameof(GetOrder), new { id = order.Id }, order);
     }
     
-
+    // --- The old slow method is still here for comparison ---
     [HttpPost("slow")]
     public async Task<IActionResult> CreateOrderSlow([FromBody] CreateOrderRequest request)
     {
         _logger.LogInformation("Starting SLOW order creation for {Customer}", request.CustomerName);
-        
-        // --- Start of the slow and problematic work ---
-
-        // 1. Simulate calling a slow payment gateway API (e.g., 3 seconds)
-        _logger.LogInformation("Processing payment...");
         await Task.Delay(3000); 
         _logger.LogInformation("Payment processed.");
-
-        // 2. Simulate updating inventory (DB work)
-        _logger.LogInformation("Updating inventory...");
         await Task.Delay(500);
         _logger.LogInformation("Inventory updated.");
-
-        // 3. Save the order to our database
         var order = new Order
         {
             CustomerName = request.CustomerName,
             TotalAmount = request.TotalAmount,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            Status = OrderStatus.Completed
         };
         _dbContext.Orders.Add(order);
         await _dbContext.SaveChangesAsync();
         _logger.LogInformation("Order saved to database with ID {OrderId}", order.Id);
-
-        // 4. Simulate calling a slow email service API (e.g., 2 seconds)
-        _logger.LogInformation("Sending confirmation email...");
         await Task.Delay(2000);
         _logger.LogInformation("Confirmation email sent.");
-
-        // --- End of the slow work ---
-
-        return CreatedAtAction(nameof(CreateOrderSlow), new { id = order.Id }, order);
+        return CreatedAtAction(nameof(GetOrder), new { id = order.Id }, order);
     }
 }
