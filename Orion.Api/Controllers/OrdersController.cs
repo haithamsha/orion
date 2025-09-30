@@ -1,4 +1,3 @@
-using Hangfire;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore; // Make sure this is included
 using Orion.Api.Data;
@@ -13,6 +12,9 @@ public record CreateOrderRequest(string CustomerName, decimal TotalAmount);
 // New DTO for the status response
 public record OrderStatusResponse(int OrderId, string Status, DateTime CreatedAt);
 
+// Define the event payload we will publish
+public record OrderPlacedEvent(int OrderId, string CustomerName, decimal TotalAmount);
+
 
 [ApiController]
 [Route("api/[controller]")]
@@ -20,19 +22,18 @@ public record OrderStatusResponse(int OrderId, string Status, DateTime CreatedAt
 public class OrdersController : ControllerBase
 {
     private readonly OrionDbContext _dbContext;
+    private readonly IMessagePublisher _messagePublisher;
     private readonly ILogger<OrdersController> _logger;
-    private readonly IBackgroundJobClient _backgroundJobClient;
 
     public OrdersController(
         OrionDbContext dbContext,
-        ILogger<OrdersController> logger,
-        IBackgroundJobClient backgroundJobClient)
+        IMessagePublisher messagePublisher) // INJECTED
     {
         _dbContext = dbContext;
-        _logger = logger;
-        _backgroundJobClient = backgroundJobClient;
+        _messagePublisher = messagePublisher;
     }
 
+    
     // --- NEW METHOD ---
     [HttpGet("{id:int}")]
     [AllowAnonymous] // <-- ALLOWS PUBLIC ACCESS TO THIS SPECIFIC ENDPOINT
@@ -73,13 +74,14 @@ public class OrdersController : ControllerBase
 
         _dbContext.Orders.Add(order);
         await _dbContext.SaveChangesAsync();
-        _logger.LogInformation("Order saved to DB with ID {OrderId}. Enqueuing background job.", order.Id);
         
-        _backgroundJobClient.Enqueue<IOrderProcessingService>(service => service.ProcessOrder(order.Id));
-        
-        _logger.LogInformation("API request finished in milliseconds.");
+        // 2. Create the event payload
+        var orderEvent = new OrderPlacedEvent(order.Id, order.CustomerName, order.TotalAmount);
 
-        // We now return the URL to the new status endpoint in the 'Location' header
+        // 3. Publish the event to the message broker.
+        _messagePublisher.Publish(orderEvent);
+        
+        // 4. Return response to the user.
         return AcceptedAtAction(nameof(GetOrder), new { id = order.Id }, order);
     }
     

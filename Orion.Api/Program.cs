@@ -1,5 +1,3 @@
-using Hangfire;
-using Hangfire.PostgreSql;
 using Orion.Api.Services;
 using Microsoft.EntityFrameworkCore;
 using Orion.Api.Data;
@@ -64,15 +62,10 @@ var connectionString = builder.Configuration.GetConnectionString("OrionDb");
 builder.Services.AddDbContext<OrionDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// 3. Add our new Order Processing Service
-builder.Services.AddScoped<IOrderProcessingService, OrderProcessingService>();
 
-// 4. Add and Configure Hangfire
-builder.Services.AddHangfire(config => config
-    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-    .UseSimpleAssemblyNameTypeSerializer()
-    .UseRecommendedSerializerSettings()
-    .UsePostgreSqlStorage(c => c.UseNpgsqlConnection(connectionString)));
+//3. ADD: Register our new RabbitMQ publisher as a Singleton
+builder.Services.AddSingleton<IMessagePublisher, RabbitMqPublisher>();
+
 
 // Add the processing server as a hosted service
 builder.Services.AddHangfireServer();
@@ -92,8 +85,6 @@ app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// 6. Add the Hangfire Dashboard
-app.UseHangfireDashboard(); // You can access this at /hangfire
 app.MapControllers();
 
 app.Run();
