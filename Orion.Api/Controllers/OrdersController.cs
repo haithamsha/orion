@@ -27,10 +27,11 @@ public class OrdersController : ControllerBase
 
     public OrdersController(
         OrionDbContext dbContext,
-        IMessagePublisher messagePublisher) // INJECTED
+        IMessagePublisher messagePublisher, ILogger<OrdersController> logger) // INJECTED
     {
         _dbContext = dbContext;
         _messagePublisher = messagePublisher;
+        _logger = logger;
     }
 
     

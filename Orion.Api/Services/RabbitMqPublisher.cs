@@ -7,29 +7,28 @@ namespace Orion.Api.Services;
 public class RabbitMqPublisher : IMessagePublisher
 {
     private readonly IConnection _connection;
-    private readonly IModel _channel;
+    private readonly IChannel _channel;
 
     public RabbitMqPublisher(IConfiguration configuration)
     {
         var factory = new ConnectionFactory() { HostName = configuration["RabbitMq:HostName"] };
-        _connection = factory.CreateConnection();
-        _channel = _connection.CreateModel();
+        _connection = factory.CreateConnectionAsync().GetAwaiter().GetResult();
+        _channel = _connection.CreateChannelAsync().GetAwaiter().GetResult();
     }
 
     public void Publish<T>(T message)
     {
         // We'll declare an "exchange" which is responsible for routing messages.
         // A "fanout" exchange sends a copy of the message to all queues that are bound to it.
-        _channel.ExchangeDeclare(exchange: "order-events", type: ExchangeType.Fanout);
+        _channel.ExchangeDeclareAsync(exchange: "order-events", type: ExchangeType.Fanout).GetAwaiter().GetResult();
 
         var json = JsonSerializer.Serialize(message);
         var body = Encoding.UTF8.GetBytes(json);
 
-        _channel.BasicPublish(
+        _channel.BasicPublishAsync(
             exchange: "order-events",
             routingKey: "", // Not used for fanout exchanges
-            basicProperties: null,
-            body: body);
+            body: body).GetAwaiter().GetResult();
 
         Console.WriteLine($"--> Published Message: {json}");
     }

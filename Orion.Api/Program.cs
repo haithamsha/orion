@@ -67,8 +67,6 @@ builder.Services.AddDbContext<OrionDbContext>(options =>
 builder.Services.AddSingleton<IMessagePublisher, RabbitMqPublisher>();
 
 
-// Add the processing server as a hosted service
-builder.Services.AddHangfireServer();
 
 var app = builder.Build();
 
