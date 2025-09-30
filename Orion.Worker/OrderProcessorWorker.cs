@@ -4,23 +4,25 @@ using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using Orion.Api.Data;
 using Orion.Api.Models;
+using System.Net.Http.Json;
 
 namespace Orion.Worker;
-
-// Event class for the message payload
-public record OrderPlacedEvent(int OrderId, string CustomerName, decimal TotalAmount);
 
 public class OrderProcessorWorker : BackgroundService
 {
     private readonly ILogger<OrderProcessorWorker> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IConfiguration _configuration;
     private readonly IConnection _connection;
     private readonly IChannel _channel;
 
-    public OrderProcessorWorker(ILogger<OrderProcessorWorker> logger, IConfiguration configuration, IServiceScopeFactory scopeFactory)
+    public OrderProcessorWorker(ILogger<OrderProcessorWorker> logger, IConfiguration configuration, IServiceScopeFactory scopeFactory, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
+        _httpClientFactory = httpClientFactory;
+        _configuration = configuration;
 
         // 1. Connect to RabbitMQ
         var factory = new ConnectionFactory() { HostName = configuration["RabbitMq:HostName"] };
@@ -88,6 +90,7 @@ public class OrderProcessorWorker : BackgroundService
         order.Status = OrderStatus.Processing;
         await dbContext.SaveChangesAsync();
 
+        string finalStatus = "";
         try
         {
             await Task.Delay(3000);
@@ -95,16 +98,36 @@ public class OrderProcessorWorker : BackgroundService
             await Task.Delay(500);
             await Task.Delay(2000);
             order.Status = OrderStatus.Completed;
+            finalStatus = order.Status.ToString();
             _logger.LogInformation("FINISHED BACKGROUND processing for Order ID: {OrderId}", order.Id);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing Order ID: {OrderId}", order.Id);
             order.Status = OrderStatus.Failed;
+            finalStatus = order.Status.ToString();
         }
         finally
         {
             await dbContext.SaveChangesAsync();
+
+            // NEW: Call the API to push real-time notification
+            _logger.LogInformation("Notifying API of final status for Order ID: {OrderId}", order.Id);
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Api-Key", _configuration["ApiKey"]);
+            
+            var payload = new { OrderId = order.Id, UserId = orderEvent.UserId, Status = finalStatus };
+            var apiUrl = $"{_configuration["ApiBaseUrl"]}/api/notifications/order-status";
+            
+            try
+            {
+                await client.PostAsJsonAsync(apiUrl, payload);
+                _logger.LogInformation("Successfully notified API for Order ID: {OrderId}", order.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to notify API for Order ID: {OrderId}", order.Id);
+            }
         }
     }
 

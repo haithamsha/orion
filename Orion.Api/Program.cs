@@ -5,11 +5,13 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Microsoft.OpenApi.Models;
+using Orion.Api.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // 1. Add services to the container.
 builder.Services.AddControllers();
+builder.Services.AddSignalR(); // <-- ADD SIGNALR
 
 // Add Swagger with Auth support
 builder.Services.AddSwaggerGen(options =>
@@ -55,7 +57,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-builder.Services.AddEndpointsApiExplorer();
+// builder.Services.AddEndpointsApiExplorer();
 
 // 2. Configure Entity Framework Core with PostgreSQL
 var connectionString = builder.Configuration.GetConnectionString("OrionDb");
@@ -84,7 +86,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-
+app.MapHub<OrderStatusHub>("/orderstatus-hub"); // <-- MAP THE HUB ENDPOINT
 app.Run();
 
 // Make Program accessible to test projects

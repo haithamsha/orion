@@ -4,6 +4,7 @@ using Orion.Api.Data;
 using Orion.Api.Models;
 using Orion.Api.Services;
 using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims; // Add this using statement
 
 namespace Orion.Api.Controllers;
 
@@ -13,7 +14,7 @@ public record CreateOrderRequest(string CustomerName, decimal TotalAmount);
 public record OrderStatusResponse(int OrderId, string Status, DateTime CreatedAt);
 
 // Define the event payload we will publish
-public record OrderPlacedEvent(int OrderId, string CustomerName, decimal TotalAmount);
+public record OrderPlacedEvent(int OrderId, string UserId, string CustomerName, decimal TotalAmount);
 
 
 [ApiController]
@@ -65,8 +66,18 @@ public class OrdersController : ControllerBase
     {
         _logger.LogInformation("Starting FAST order creation for {Customer}", request.CustomerName);
 
+         // NEW: Get the user ID from the token's 'sub' (subject) claim
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(userId))
+        {
+            // This should not happen if the [Authorize] attribute is working correctly
+            return Unauthorized();
+        }
+
+        // 1. Create the order with the new UserId.
         var order = new Order
         {
+            UserId = userId, // <-- SAVE THE USER ID
             CustomerName = request.CustomerName,
             TotalAmount = request.TotalAmount,
             Status = OrderStatus.Pending,
@@ -75,9 +86,9 @@ public class OrdersController : ControllerBase
 
         _dbContext.Orders.Add(order);
         await _dbContext.SaveChangesAsync();
-        
-        // 2. Create the event payload
-        var orderEvent = new OrderPlacedEvent(order.Id, order.CustomerName, order.TotalAmount);
+
+        // 2. Create the event payload with the UserId
+        var orderEvent = new OrderPlacedEvent(order.Id, order.UserId, order.CustomerName, order.TotalAmount);
 
         // 3. Publish the event to the message broker.
         _messagePublisher.Publish(orderEvent);

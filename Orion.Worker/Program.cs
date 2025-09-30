@@ -11,6 +11,9 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddDbContext<OrionDbContext>(options =>
             options.UseNpgsql(connectionString));
             
+        // Register HttpClient for making API calls
+        services.AddHttpClient();
+            
         // Register our main worker service
         services.AddHostedService<OrderProcessorWorker>();
     })
