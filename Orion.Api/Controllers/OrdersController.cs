@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore; // Make sure this is included
 using Orion.Api.Data;
 using Orion.Api.Models;
 using Orion.Api.Services;
+using Microsoft.AspNetCore.Authorization;
 
 namespace Orion.Api.Controllers;
 
@@ -15,6 +16,7 @@ public record OrderStatusResponse(int OrderId, string Status, DateTime CreatedAt
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize] // <-- THIS PROTECTS THE ENTIRE CONTROLLER
 public class OrdersController : ControllerBase
 {
     private readonly OrionDbContext _dbContext;
@@ -33,6 +35,7 @@ public class OrdersController : ControllerBase
 
     // --- NEW METHOD ---
     [HttpGet("{id:int}")]
+    [AllowAnonymous] // <-- ALLOWS PUBLIC ACCESS TO THIS SPECIFIC ENDPOINT
     public async Task<IActionResult> GetOrder(int id)
     {
         var order = await _dbContext.Orders
