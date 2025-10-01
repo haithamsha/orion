@@ -76,105 +76,167 @@ public class OrderProcessorWorker : BackgroundService
     }
 
     private async Task ProcessOrder(OrderPlacedEvent orderEvent)
+{
+    using var scope = _scopeFactory.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<OrionDbContext>();
+
+    var order = await dbContext.Orders
+        .Include(o => o.OrderItems)
+        .ThenInclude(oi => oi.Inventory)
+        .FirstOrDefaultAsync(o => o.Id == orderEvent.OrderId);
+
+    if (order == null)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<OrionDbContext>();
+        _logger.LogError("Order with ID {OrderId} not found.", orderEvent.OrderId);
+        return;
+    }
 
-        var order = await dbContext.Orders
-            .Include(o => o.OrderItems)
-            .ThenInclude(oi => oi.Inventory)
-            .FirstOrDefaultAsync(o => o.Id == orderEvent.OrderId);
+    _logger.LogInformation("Starting ENHANCED processing for Order ID: {OrderId} (Status: {Status})", 
+        order.Id, order.Status);
 
-        if (order == null)
+    // STEP 1: Update to Processing status and send processing email
+    order.Status = OrderStatus.Processing;
+    await dbContext.SaveChangesAsync();
+
+    // Send processing email
+    await SendOrderStatusEmailAsync(orderEvent, order, "Processing");
+
+    string finalStatus = "";
+    bool inventoryConfirmed = false;
+
+    try
+    {
+        _logger.LogInformation("Processing payment for Order ID: {OrderId}, Amount: ${Amount}", 
+            order.Id, order.TotalAmount);
+        
+        await Task.Delay(2000);
+
+        if (orderEvent.CustomerName.Contains("Cursed") || order.TotalAmount == 666)
         {
-            _logger.LogError("Order with ID {OrderId} not found.", orderEvent.OrderId);
-            return;
+            throw new InvalidOperationException("Simulated payment failure - cursed amount!");
         }
 
-        _logger.LogInformation("Starting ENHANCED processing for Order ID: {OrderId} (Status: {Status})", 
-            order.Id, order.Status);
+        _logger.LogInformation("Payment successful for Order ID: {OrderId}. Confirming inventory...", order.Id);
+        
+        inventoryConfirmed = await ConfirmInventoryAsync(dbContext, order);
+        
+        if (!inventoryConfirmed)
+        {
+            throw new InvalidOperationException("Failed to confirm inventory reservation");
+        }
 
-        order.Status = OrderStatus.Processing;
+        order.Status = OrderStatus.InventoryConfirmed;
         await dbContext.SaveChangesAsync();
 
-        string finalStatus = "";
-        bool inventoryConfirmed = false;
+        _logger.LogInformation("Finalizing order processing for Order ID: {OrderId}...", order.Id);
+        await Task.Delay(1000);
 
+        order.Status = OrderStatus.Completed;
+        finalStatus = order.Status.ToString();
+        
+        _logger.LogInformation("✅ COMPLETED processing for Order ID: {OrderId}. Inventory confirmed.", order.Id);
+
+        // Send completion email
+        await SendOrderStatusEmailAsync(orderEvent, order, "Completed");
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "❌ Error processing Order ID: {OrderId}", order.Id);
+
+        if (!inventoryConfirmed)
+        {
+            _logger.LogWarning("Rolling back inventory reservation for failed Order ID: {OrderId}", order.Id);
+            await RollbackInventoryAsync(dbContext, order);
+            order.Status = OrderStatus.InventoryRollback;
+        }
+        else
+        {
+            order.Status = OrderStatus.Failed;
+        }
+        
+        finalStatus = order.Status.ToString();
+
+        // Send failure email
+        await SendOrderStatusEmailAsync(orderEvent, order, "Failed");
+    }
+    finally
+    {
+        await dbContext.SaveChangesAsync();
+
+        _logger.LogInformation("Notifying API of final status for Order ID: {OrderId}", order.Id);
+        var client = _httpClientFactory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Api-Key", _configuration["ApiKey"]);
+        
+        var payload = new { 
+            OrderId = order.Id, 
+            UserId = orderEvent.UserId, 
+            Status = finalStatus,
+            TotalAmount = order.TotalAmount,
+            ItemCount = orderEvent.Items?.Count ?? 0
+        };
+        var apiUrl = $"{_configuration["ApiBaseUrl"]}/api/notifications/order-status";
+        
         try
         {
-            _logger.LogInformation("Processing payment for Order ID: {OrderId}, Amount: ${Amount}", 
-                order.Id, order.TotalAmount);
-            
-            await Task.Delay(2000);
-
-            if (order.TotalAmount == 666 || orderEvent.CustomerName.Contains("Cursed"))
-            {
-                throw new InvalidOperationException("Simulated payment failure - cursed amount!");
-            }
-
-            _logger.LogInformation("Payment successful for Order ID: {OrderId}. Confirming inventory...", order.Id);
-            
-            inventoryConfirmed = await ConfirmInventoryAsync(dbContext, order);
-            
-            if (!inventoryConfirmed)
-            {
-                throw new InvalidOperationException("Failed to confirm inventory reservation");
-            }
-
-            order.Status = OrderStatus.InventoryConfirmed;
-            await dbContext.SaveChangesAsync();
-
-            _logger.LogInformation("Finalizing order processing for Order ID: {OrderId}...", order.Id);
-            await Task.Delay(1000);
-
-            order.Status = OrderStatus.Completed;
-            finalStatus = order.Status.ToString();
-            
-            _logger.LogInformation("✅ COMPLETED processing for Order ID: {OrderId}. Inventory confirmed.", order.Id);
+            await client.PostAsJsonAsync(apiUrl, payload);
+            _logger.LogInformation("✅ Successfully notified API for Order ID: {OrderId} with status: {Status}", order.Id, finalStatus);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error processing Order ID: {OrderId}", order.Id);
+            _logger.LogError(ex, "❌ Failed to notify API for Order ID: {OrderId} with status: {Status}", order.Id, finalStatus);
+        }
+    }
+}
 
-            if (!inventoryConfirmed)
+// ADD THIS NEW METHOD to your Worker class:
+    private async Task SendOrderStatusEmailAsync(OrderPlacedEvent orderEvent, Order order, string emailType)
+    {
+        try
+        {
+            _logger.LogInformation("📧 Sending {EmailType} email for Order ID: {OrderId}", emailType, order.Id);
+
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Api-Key", _configuration["ApiKey"]);
+
+            // Convert OrderItems to the expected format
+            var orderItems = orderEvent.Items.Select(item => new
             {
-                _logger.LogWarning("Rolling back inventory reservation for failed Order ID: {OrderId}", order.Id);
-                await RollbackInventoryAsync(dbContext, order);
-                order.Status = OrderStatus.InventoryRollback;
+                ProductName = item.ProductName,
+                ProductSku = item.ProductSku,
+                UnitPrice = item.UnitPrice,
+                Quantity = item.Quantity,
+                TotalPrice = item.UnitPrice * item.Quantity
+            }).ToList();
+
+            var emailPayload = new
+            {
+                OrderId = order.Id,
+                CustomerName = orderEvent.CustomerName,
+                CustomerEmail = "customer@demo.com", // In production, get from user data
+                TotalAmount = order.TotalAmount,
+                OrderDate = order.CreatedAt,
+                Items = orderItems,
+                Status = order.Status.ToString(),
+                EmailType = emailType
+            };
+
+            var apiUrl = $"{_configuration["ApiBaseUrl"]}/api/email/send-order-status";
+            var response = await client.PostAsJsonAsync(apiUrl, emailPayload);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("✅ {EmailType} email sent successfully for Order {OrderId}", emailType, order.Id);
             }
             else
             {
-                order.Status = OrderStatus.Failed;
+                _logger.LogWarning("⚠️ Failed to send {EmailType} email for Order {OrderId}. Status: {StatusCode}", 
+                    emailType, order.Id, response.StatusCode);
             }
-            
-            finalStatus = order.Status.ToString();
         }
-        finally
+        catch (Exception ex)
         {
-            await dbContext.SaveChangesAsync();
-
-            _logger.LogInformation("Notifying API of final status for Order ID: {OrderId}", order.Id);
-            var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Add("X-Api-Key", _configuration["ApiKey"]);
-            
-            var payload = new { 
-                OrderId = order.Id, 
-                UserId = orderEvent.UserId, 
-                Status = finalStatus,
-                TotalAmount = order.TotalAmount,
-                ItemCount = orderEvent.Items?.Count ?? 0
-            };
-            var apiUrl = $"{_configuration["ApiBaseUrl"]}/api/notifications/order-status";
-            
-            try
-            {
-                await client.PostAsJsonAsync(apiUrl, payload);
-                _logger.LogInformation("Successfully notified API for Order ID: {OrderId} with status: {Status}", order.Id, finalStatus);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to notify API for Order ID: {OrderId} with status: {Status}", order.Id, finalStatus);
-            }
+            _logger.LogError(ex, "❌ Error sending {EmailType} email for Order {OrderId}", emailType, order.Id);
+            // Don't fail the order processing if email fails
         }
     }
 
