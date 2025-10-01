@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using RabbitMQ.Client;
+using Orion.Api.Models;
 
 namespace Orion.Api.Services;
 
@@ -16,10 +17,9 @@ public class RabbitMqPublisher : IMessagePublisher
         _channel = _connection.CreateChannelAsync().GetAwaiter().GetResult();
     }
 
+    // Keep your existing Publish method for backward compatibility
     public void Publish<T>(T message)
     {
-        // We'll declare an "exchange" which is responsible for routing messages.
-        // A "fanout" exchange sends a copy of the message to all queues that are bound to it.
         _channel.ExchangeDeclareAsync(exchange: "order-events", type: ExchangeType.Fanout).GetAwaiter().GetResult();
 
         var json = JsonSerializer.Serialize(message);
@@ -27,9 +27,25 @@ public class RabbitMqPublisher : IMessagePublisher
 
         _channel.BasicPublishAsync(
             exchange: "order-events",
-            routingKey: "", // Not used for fanout exchanges
+            routingKey: "",
             body: body).GetAwaiter().GetResult();
 
         Console.WriteLine($"--> Published Message: {json}");
+    }
+
+    // NEW: Add this method for the OrderPlacedEvent
+    public async Task PublishOrderPlacedAsync(OrderPlacedEvent orderEvent)
+    {
+        await _channel.ExchangeDeclareAsync(exchange: "order-events", type: ExchangeType.Fanout);
+
+        var json = JsonSerializer.Serialize(orderEvent);
+        var body = Encoding.UTF8.GetBytes(json);
+
+        await _channel.BasicPublishAsync(
+            exchange: "order-events",
+            routingKey: "",
+            body: body);
+
+        Console.WriteLine($"--> Published OrderPlacedEvent: {json}");
     }
 }

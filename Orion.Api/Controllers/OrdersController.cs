@@ -1,123 +1,208 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore; // Make sure this is included
+using Microsoft.EntityFrameworkCore;
 using Orion.Api.Data;
 using Orion.Api.Models;
+using Orion.Api.Models.DTOs;
 using Orion.Api.Services;
-using Microsoft.AspNetCore.Authorization;
-using System.Security.Claims; // Add this using statement
+using System.Security.Claims;
 
 namespace Orion.Api.Controllers;
 
-public record CreateOrderRequest(string CustomerName, decimal TotalAmount);
-
-// New DTO for the status response
-public record OrderStatusResponse(int OrderId, string Status, DateTime CreatedAt);
-
-// Define the event payload we will publish
-public record OrderPlacedEvent(int OrderId, string UserId, string CustomerName, decimal TotalAmount);
-
-
 [ApiController]
 [Route("api/[controller]")]
-[Authorize] // <-- THIS PROTECTS THE ENTIRE CONTROLLER
+[Authorize] // All endpoints require authentication
 public class OrdersController : ControllerBase
 {
     private readonly OrionDbContext _dbContext;
     private readonly IMessagePublisher _messagePublisher;
+    private readonly IInventoryService _inventoryService;
     private readonly ILogger<OrdersController> _logger;
 
     public OrdersController(
-        OrionDbContext dbContext,
-        IMessagePublisher messagePublisher, ILogger<OrdersController> logger) // INJECTED
+        OrionDbContext dbContext, 
+        IMessagePublisher messagePublisher,
+        IInventoryService inventoryService,
+        ILogger<OrdersController> logger)
     {
         _dbContext = dbContext;
         _messagePublisher = messagePublisher;
+        _inventoryService = inventoryService;
         _logger = logger;
     }
 
-    
-    // --- NEW METHOD ---
-    [HttpGet("{id:int}")]
-    [AllowAnonymous] // <-- ALLOWS PUBLIC ACCESS TO THIS SPECIFIC ENDPOINT
-    public async Task<IActionResult> GetOrder(int id)
+    [HttpPost("fast")]
+    public async Task<ActionResult<OrderResponse>> CreateOrderFast([FromBody] CreateOrderRequest request)
     {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized("User ID not found in token");
+        }
+
+        _logger.LogInformation("Creating order for user {UserId} with {ItemCount} items", userId, request.Items.Count);
+
+        try
+        {
+            // STEP 1: Validate inventory availability
+            var inventoryCheck = await ValidateInventoryAsync(request.Items);
+            if (!inventoryCheck.IsValid)
+            {
+                return BadRequest(inventoryCheck.ErrorMessage);
+            }
+
+            // STEP 2: Reserve inventory
+            var reservationRequests = request.Items.Select(item => 
+                new InventoryReservationRequest(item.ProductSku, item.Quantity)).ToList();
+            
+            var reservationResult = await _inventoryService.ReserveInventoryAsync(reservationRequests);
+            if (!reservationResult.Success)
+            {
+                return BadRequest($"Inventory reservation failed: {reservationResult.Message}");
+            }
+
+            // STEP 3: Create order with reserved inventory
+            var order = await CreateOrderWithItemsAsync(userId, request, inventoryCheck.InventoryItems);
+
+            // STEP 4: Update order status to InventoryReserved
+            order.Status = OrderStatus.InventoryReserved;
+            await _dbContext.SaveChangesAsync();
+
+            // STEP 5: Publish enhanced event for background processing
+            var orderEvent = new OrderPlacedEvent(
+                order.Id,
+                userId,
+                request.CustomerName,
+                order.TotalAmount,
+                order.OrderItems.Select(oi => new OrderItemData(
+                    oi.ProductSku,
+                    oi.ProductName,
+                    oi.Quantity,
+                    oi.UnitPrice
+                )).ToList()
+            );
+
+            await _messagePublisher.PublishOrderPlacedAsync(orderEvent);
+
+            _logger.LogInformation("Order {OrderId} created successfully with inventory reserved", order.Id);
+
+            // STEP 6: Return order response
+            return Ok(MapToOrderResponse(order));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create order for user {UserId}", userId);
+            return StatusCode(500, "An error occurred while creating the order");
+        }
+    }
+
+    [HttpGet("{id}")]
+    public async Task<ActionResult<OrderResponse>> GetOrder(int id)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        
         var order = await _dbContext.Orders
-            .AsNoTracking() // Use AsNoTracking for read-only queries for better performance
-            .FirstOrDefaultAsync(o => o.Id == id);
+            .Include(o => o.OrderItems)
+            .ThenInclude(oi => oi.Inventory)
+            .FirstOrDefaultAsync(o => o.Id == id && o.UserId == userId);
 
         if (order == null)
         {
-            return NotFound();
+            return NotFound($"Order {id} not found");
         }
 
-        var response = new OrderStatusResponse(
-            order.Id,
-            order.Status.ToString(), // Convert enum to string for clean JSON
-            order.CreatedAt
-        );
-
-        return Ok(response);
+        return Ok(MapToOrderResponse(order));
     }
-    // --- END OF NEW METHOD ---
 
-
-    [HttpPost("fast")]
-    public async Task<IActionResult> CreateOrderFast([FromBody] CreateOrderRequest request)
+    [HttpGet("inventory")]
+    public async Task<ActionResult<List<Inventory>>> GetAvailableProducts()
     {
-        _logger.LogInformation("Starting FAST order creation for {Customer}", request.CustomerName);
+        var products = await _inventoryService.GetAvailableProductsAsync();
+        return Ok(products);
+    }
 
-         // NEW: Get the user ID from the token's 'sub' (subject) claim
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrEmpty(userId))
+    // PRIVATE HELPER METHODS
+
+    private async Task<(bool IsValid, string? ErrorMessage, List<Inventory> InventoryItems)> ValidateInventoryAsync(List<OrderItemRequest> items)
+    {
+        var inventoryItems = new List<Inventory>();
+
+        foreach (var item in items)
         {
-            // This should not happen if the [Authorize] attribute is working correctly
-            return Unauthorized();
+            var product = await _inventoryService.GetProductBySkuAsync(item.ProductSku);
+            if (product == null)
+            {
+                return (false, $"Product with SKU '{item.ProductSku}' not found", inventoryItems);
+            }
+
+            if (!await _inventoryService.IsProductAvailableAsync(item.ProductSku, item.Quantity))
+            {
+                return (false, $"Insufficient stock for product '{item.ProductSku}'. Available: {product.AvailableQuantity}, Requested: {item.Quantity}", inventoryItems);
+            }
+
+            inventoryItems.Add(product);
         }
 
-        // 1. Create the order with the new UserId.
+        return (true, null, inventoryItems);
+    }
+
+    private async Task<Order> CreateOrderWithItemsAsync(string userId, CreateOrderRequest request, List<Inventory> inventoryItems)
+    {
         var order = new Order
         {
-            UserId = userId, // <-- SAVE THE USER ID
+            UserId = userId,
             CustomerName = request.CustomerName,
-            TotalAmount = request.TotalAmount,
             Status = OrderStatus.Pending,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        _dbContext.Orders.Add(order);
-        await _dbContext.SaveChangesAsync();
-
-        // 2. Create the event payload with the UserId
-        var orderEvent = new OrderPlacedEvent(order.Id, order.UserId, order.CustomerName, order.TotalAmount);
-
-        // 3. Publish the event to the message broker.
-        _messagePublisher.Publish(orderEvent);
-        
-        // 4. Return response to the user.
-        return AcceptedAtAction(nameof(GetOrder), new { id = order.Id }, order);
-    }
-    
-    // --- The old slow method is still here for comparison ---
-    [HttpPost("slow")]
-    public async Task<IActionResult> CreateOrderSlow([FromBody] CreateOrderRequest request)
-    {
-        _logger.LogInformation("Starting SLOW order creation for {Customer}", request.CustomerName);
-        await Task.Delay(3000); 
-        _logger.LogInformation("Payment processed.");
-        await Task.Delay(500);
-        _logger.LogInformation("Inventory updated.");
-        var order = new Order
-        {
-            CustomerName = request.CustomerName,
-            TotalAmount = request.TotalAmount,
             CreatedAt = DateTime.UtcNow,
-            Status = OrderStatus.Completed
+            OrderItems = new List<OrderItem>()
         };
+
+        decimal totalAmount = 0;
+
+        for (int i = 0; i < request.Items.Count; i++)
+        {
+            var requestItem = request.Items[i];
+            var inventory = inventoryItems[i];
+
+            var orderItem = new OrderItem
+            {
+                Order = order,
+                InventoryId = inventory.Id,
+                Inventory = inventory,
+                ProductName = inventory.ProductName,
+                ProductSku = inventory.ProductSku,
+                UnitPrice = inventory.Price,
+                Quantity = requestItem.Quantity
+            };
+
+            order.OrderItems.Add(orderItem);
+            totalAmount += orderItem.TotalPrice;
+        }
+
+        order.TotalAmount = totalAmount;
+
         _dbContext.Orders.Add(order);
         await _dbContext.SaveChangesAsync();
-        _logger.LogInformation("Order saved to database with ID {OrderId}", order.Id);
-        await Task.Delay(2000);
-        _logger.LogInformation("Confirmation email sent.");
-        return CreatedAtAction(nameof(GetOrder), new { id = order.Id }, order);
+
+        return order;
+    }
+
+    private static OrderResponse MapToOrderResponse(Order order)
+    {
+        return new OrderResponse(
+            order.Id,
+            order.UserId,
+            order.CustomerName,
+            order.TotalAmount,
+            order.Status.ToString(),
+            order.CreatedAt,
+            order.OrderItems.Select(oi => new OrderItemResponse(
+                oi.ProductName,
+                oi.ProductSku,
+                oi.UnitPrice,
+                oi.Quantity,
+                oi.TotalPrice
+            )).ToList()
+        );
     }
 }
