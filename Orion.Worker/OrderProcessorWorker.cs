@@ -122,11 +122,11 @@ public class OrderProcessorWorker : BackgroundService
             try
             {
                 await client.PostAsJsonAsync(apiUrl, payload);
-                _logger.LogInformation("Successfully notified API for Order ID: {OrderId}", order.Id);
+                _logger.LogInformation("Successfully notified API for Order ID: {OrderId} with status: {Status}", order.Id, finalStatus);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to notify API for Order ID: {OrderId}", order.Id);
+                _logger.LogError(ex, "Failed to notify API for Order ID: {OrderId} with status: {Status}", order.Id, finalStatus);
             }
         }
     }
