@@ -17,17 +17,21 @@ public class OrdersController : ControllerBase
     private readonly OrionDbContext _dbContext;
     private readonly IMessagePublisher _messagePublisher;
     private readonly IInventoryService _inventoryService;
+    private readonly IEmailService _emailService; // ADD THIS LINE
     private readonly ILogger<OrdersController> _logger;
 
+
     public OrdersController(
-        OrionDbContext dbContext, 
+        OrionDbContext dbContext,
         IMessagePublisher messagePublisher,
         IInventoryService inventoryService,
+        IEmailService emailService, // ADD THIS LINE
         ILogger<OrdersController> logger)
     {
         _dbContext = dbContext;
         _messagePublisher = messagePublisher;
         _inventoryService = inventoryService;
+        _emailService = emailService; // ADD THIS LINE
         _logger = logger;
     }
 
@@ -68,7 +72,10 @@ public class OrdersController : ControllerBase
             order.Status = OrderStatus.InventoryReserved;
             await _dbContext.SaveChangesAsync();
 
-            // STEP 5: Publish enhanced event for background processing
+            // STEP 5: Send order confirmation email
+            await SendOrderConfirmationEmailAsync(order, request.CustomerName);
+
+            // STEP 6: Publish enhanced event for background processing
             var orderEvent = new OrderPlacedEvent(
                 order.Id,
                 userId,
@@ -84,15 +91,62 @@ public class OrdersController : ControllerBase
 
             await _messagePublisher.PublishOrderPlacedAsync(orderEvent);
 
-            _logger.LogInformation("Order {OrderId} created successfully with inventory reserved", order.Id);
+            _logger.LogInformation("Order {OrderId} created successfully with inventory reserved and confirmation email sent", order.Id);
 
-            // STEP 6: Return order response
+
+            // STEP 7: Return order response
             return Ok(MapToOrderResponse(order));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create order for user {UserId}", userId);
             return StatusCode(500, "An error occurred while creating the order");
+        }
+    }
+
+      // ADD THIS NEW METHOD:
+    private async Task SendOrderConfirmationEmailAsync(Order order, string customerName)
+    {
+        try
+        {
+            // For demo purposes, we'll use a demo email
+            // In production, you'd get the user's actual email from the database or JWT claims
+            var customerEmail = User.FindFirst(ClaimTypes.Email)?.Value ?? "customer@demo.com";
+
+            var orderEmailData = new OrderEmailData(
+                order.Id,
+                customerName,
+                order.TotalAmount,
+                order.CreatedAt,
+                order.OrderItems.Select(oi => new OrderItemResponse(
+                    oi.ProductName,
+                    oi.ProductSku,
+                    oi.UnitPrice,
+                    oi.Quantity,
+                    oi.TotalPrice
+                )).ToList(),
+                order.Status.ToString()
+            );
+
+            var emailSent = await _emailService.SendOrderConfirmationEmailAsync(
+                customerEmail, 
+                customerName, 
+                orderEmailData
+            );
+
+            if (emailSent)
+            {
+                _logger.LogInformation("✅ Order confirmation email sent successfully for Order {OrderId}", order.Id);
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ Failed to send order confirmation email for Order {OrderId}", order.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ Error sending order confirmation email for Order {OrderId}", order.Id);
+            // Don't fail the order creation if email fails
         }
     }
 
