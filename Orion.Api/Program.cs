@@ -67,7 +67,7 @@ builder.Services.AddDbContext<OrionDbContext>(options =>
 
 //3. ADD: Register our new RabbitMQ publisher as a Singleton
 builder.Services.AddSingleton<IMessagePublisher, RabbitMqPublisher>();
-
+builder.Services.AddScoped<IInventoryService, InventoryService>();
 
 
 var app = builder.Build();
@@ -87,6 +87,14 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapHub<OrderStatusHub>("/orderstatus-hub"); // <-- MAP THE HUB ENDPOINT
+
+//Seed data
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<OrionDbContext>();
+    await DataSeeder.SeedInventoryAsync(context);
+}
+
 app.Run();
 
 // Make Program accessible to test projects
