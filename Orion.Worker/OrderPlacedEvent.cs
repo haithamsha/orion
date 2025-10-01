@@ -1,3 +1,15 @@
-// This is the contract between the publisher (API) and consumer (Worker)
-// It must match the OrderPlacedEvent record in the API project
-public record OrderPlacedEvent(int OrderId, string UserId, string CustomerName, decimal TotalAmount);
+// Enhanced event contract - must match the API exactly
+public record OrderPlacedEvent(
+    int OrderId, 
+    string UserId, 
+    string CustomerName, 
+    decimal TotalAmount,
+    List<OrderItemData> Items
+);
+
+public record OrderItemData(
+    string ProductSku,
+    string ProductName,
+    int Quantity,
+    decimal UnitPrice
+);
