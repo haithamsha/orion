@@ -68,7 +68,7 @@ builder.Services.AddDbContext<OrionDbContext>(options =>
 //3. ADD: Register our new RabbitMQ publisher as a Singleton
 builder.Services.AddSingleton<IMessagePublisher, RabbitMqPublisher>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
-builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IEmailService, SimpleEmailService>();
 
 var app = builder.Build();
 
