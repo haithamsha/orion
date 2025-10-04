@@ -304,3 +304,6 @@ Console.WriteLine("✅ Orion Backend is ready to handle requests!");
 Console.WriteLine($"🚀 Started at: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
 
 app.Run();
+
+// Make Program class accessible for testing
+public partial class Program { }

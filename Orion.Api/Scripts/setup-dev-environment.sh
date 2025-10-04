@@ -3,7 +3,7 @@
 echo "🔧 Setting up Orion Development Environment Variables..."
 
 # Database
-export DATABASE_CONNECTION_STRING="Host=localhost;Database=orion_dev_db;Username=postgres;Password=postgres;Pooling=true"
+export DATABASE_CONNECTION_STRING="Host=localhost;Database=orion_db;Username=postgres;Password=postgres;Pooling=true"
 
 # RabbitMQ
 export RABBITMQ_HOSTNAME="localhost"

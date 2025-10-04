@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Extensions.Options;
 using Orion.Api.Configuration;
 using Orion.Api.Data;
+using RabbitMQ.Client; // Ensure this is present
 
 namespace Orion.Api.Services;
 
@@ -118,8 +119,7 @@ public class ConfigurationValidationService : IConfigurationValidationService
     {
         try
         {
-            // Test RabbitMQ connection
-            using var factory = new RabbitMQ.Client.ConnectionFactory()
+            var factory = new ConnectionFactory()
             {
                 HostName = _config.RabbitMq.HostName,
                 Port = _config.RabbitMq.Port,
@@ -157,18 +157,18 @@ public class ConfigurationValidationService : IConfigurationValidationService
             if (hasValidConfig)
             {
                 _logger.LogInformation("✅ Email configuration validated");
-                return true;
+                return await Task.FromResult(true);
             }
             else
             {
                 _logger.LogWarning("⚠️ Email configuration incomplete");
-                return false;
+                return await Task.FromResult(false);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "❌ Email configuration validation failed");
-            return false;
+            return await Task.FromResult(false);
         }
     }
 
