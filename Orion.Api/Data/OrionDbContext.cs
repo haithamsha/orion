@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Orion.Api.Models;
+using Orion.Api.ReadModels;
 
 namespace Orion.Api.Data;
 
@@ -15,6 +16,14 @@ public class OrionDbContext : DbContext
     // ADD ONLY THESE TWO NEW DbSets:
     public DbSet<EmailDeliveryLog> EmailDeliveryLogs { get; set; }
     public DbSet<EmailDeliveryAttempt> EmailDeliveryAttempts { get; set; }
+
+    //event store table
+    public DbSet<EventStoreEntry> EventStoreEntries { get; set; }
+    
+    // Read Models for CQRS
+    public DbSet<OrderSummaryView> OrderSummaryViews { get; set; }
+    public DbSet<OrderDetailView> OrderDetailViews { get; set; }
+    public DbSet<UserOrderHistoryView> UserOrderHistoryViews { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -46,7 +55,7 @@ public class OrionDbContext : DbContext
         // NEW: User model configurations
         modelBuilder.Entity<User>()
             .HasKey(u => u.Id); // Primary key is Id
-            
+
         modelBuilder.Entity<User>()
             .HasIndex(u => u.UserId)
             .IsUnique(); // Ensure UserId (from JWT) is unique
@@ -106,6 +115,65 @@ public class OrionDbContext : DbContext
             entity.HasIndex(e => e.OrderId);
             entity.HasIndex(e => e.Success);
             entity.HasIndex(e => e.AttemptedAt);
+        });
+
+        // Event Store configuration
+        modelBuilder.Entity<EventStoreEntry>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.EventType).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.EventData).IsRequired();
+            entity.Property(e => e.UserId).HasMaxLength(50);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            // Indexes for efficient querying
+            entity.HasIndex(e => e.AggregateId);
+            entity.HasIndex(e => new { e.AggregateId, e.AggregateVersion }).IsUnique();
+            entity.HasIndex(e => e.EventId).IsUnique();
+            entity.HasIndex(e => e.OccurredAt);
+        });
+
+        // Read Models configuration
+        modelBuilder.Entity<OrderSummaryView>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.Property(e => e.UserId).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.CustomerName).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.TotalAmount).HasPrecision(18, 2);
+            entity.Property(e => e.SearchText).HasMaxLength(500);
+
+            // Indexes for efficient querying
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasIndex(e => e.SearchText);
+        });
+
+        modelBuilder.Entity<OrderDetailView>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.Property(e => e.UserId).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.CustomerName).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.TotalAmount).HasPrecision(18, 2);
+            entity.Property(e => e.OrderItemsJson).HasColumnType("text");
+            entity.Property(e => e.StatusHistoryJson).HasColumnType("text");
+
+            // Indexes for efficient querying
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.CreatedAt);
+        });
+
+        modelBuilder.Entity<UserOrderHistoryView>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.UserId).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.CustomerName).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.TotalAmount).HasPrecision(18, 2);
+
+            // Composite index for efficient user queries
+            entity.HasIndex(e => new { e.UserId, e.CreatedAt });
+            entity.HasIndex(e => e.Status);
         });
     }
 }

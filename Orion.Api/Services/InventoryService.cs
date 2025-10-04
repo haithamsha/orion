@@ -31,109 +31,124 @@ public class InventoryService : IInventoryService
 
     public async Task<InventoryReservationResult> ReserveInventoryAsync(List<InventoryReservationRequest> items)
     {
-        using var transaction = await _dbContext.Database.BeginTransactionAsync();
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
         
-        try
+        return await strategy.ExecuteAsync(async () =>
         {
-            foreach (var item in items)
+            using var transaction = await _dbContext.Database.BeginTransactionAsync();
+            
+            try
             {
-                var product = await _dbContext.Inventories
-                    .FirstOrDefaultAsync(i => i.ProductSku == item.ProductSku);
-
-                if (product == null)
+                foreach (var item in items)
                 {
-                    return new InventoryReservationResult(false, $"Product {item.ProductSku} not found");
+                    var product = await _dbContext.Inventories
+                        .FirstOrDefaultAsync(i => i.ProductSku == item.ProductSku);
+
+                    if (product == null)
+                    {
+                        return new InventoryReservationResult(false, $"Product {item.ProductSku} not found");
+                    }
+
+                    if (product.AvailableQuantity < item.Quantity)
+                    {
+                        return new InventoryReservationResult(false, 
+                            $"Insufficient stock for {item.ProductSku}. Available: {product.AvailableQuantity}, Requested: {item.Quantity}");
+                    }
+
+                    // Reserve the inventory
+                    product.AvailableQuantity -= item.Quantity;
+                    product.ReservedQuantity += item.Quantity;
+                    product.UpdatedAt = DateTime.UtcNow;
                 }
 
-                if (product.AvailableQuantity < item.Quantity)
-                {
-                    return new InventoryReservationResult(false, 
-                        $"Insufficient stock for {item.ProductSku}. Available: {product.AvailableQuantity}, Requested: {item.Quantity}");
-                }
+                await _dbContext.SaveChangesAsync();
+                await transaction.CommitAsync();
 
-                // Reserve the inventory
-                product.AvailableQuantity -= item.Quantity;
-                product.ReservedQuantity += item.Quantity;
-                product.UpdatedAt = DateTime.UtcNow;
+                _logger.LogInformation("Successfully reserved inventory for {ItemCount} items", items.Count);
+                return new InventoryReservationResult(true, "Inventory reserved successfully");
             }
-
-            await _dbContext.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            _logger.LogInformation("Successfully reserved inventory for {ItemCount} items", items.Count);
-            return new InventoryReservationResult(true, "Inventory reserved successfully");
-        }
-        catch (Exception ex)
-        {
-            await transaction.RollbackAsync();
-            _logger.LogError(ex, "Failed to reserve inventory");
-            return new InventoryReservationResult(false, "Failed to reserve inventory");
-        }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                _logger.LogError(ex, "Failed to reserve inventory");
+                return new InventoryReservationResult(false, "Failed to reserve inventory");
+            }
+        });
     }
 
     public async Task<bool> ConfirmReservationAsync(int orderId)
     {
-        using var transaction = await _dbContext.Database.BeginTransactionAsync();
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
         
-        try
+        return await strategy.ExecuteAsync(async () =>
         {
-            var orderItems = await _dbContext.OrderItems
-                .Include(oi => oi.Inventory)
-                .Where(oi => oi.OrderId == orderId)
-                .ToListAsync();
-
-            foreach (var orderItem in orderItems)
+            using var transaction = await _dbContext.Database.BeginTransactionAsync();
+            
+            try
             {
-                // Move from reserved to sold (remove from reserved, don't add back to available)
-                orderItem.Inventory.ReservedQuantity -= orderItem.Quantity;
-                orderItem.Inventory.UpdatedAt = DateTime.UtcNow;
+                var orderItems = await _dbContext.OrderItems
+                    .Include(oi => oi.Inventory)
+                    .Where(oi => oi.OrderId == orderId)
+                    .ToListAsync();
+
+                foreach (var orderItem in orderItems)
+                {
+                    // Move from reserved to sold (remove from reserved, don't add back to available)
+                    orderItem.Inventory.ReservedQuantity -= orderItem.Quantity;
+                    orderItem.Inventory.UpdatedAt = DateTime.UtcNow;
+                }
+
+                await _dbContext.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                _logger.LogInformation("Successfully confirmed inventory reservation for Order {OrderId}", orderId);
+                return true;
             }
-
-            await _dbContext.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            _logger.LogInformation("Successfully confirmed inventory reservation for Order {OrderId}", orderId);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            await transaction.RollbackAsync();
-            _logger.LogError(ex, "Failed to confirm inventory reservation for Order {OrderId}", orderId);
-            return false;
-        }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                _logger.LogError(ex, "Failed to confirm inventory reservation for Order {OrderId}", orderId);
+                return false;
+            }
+        });
     }
 
     public async Task<bool> RollbackReservationAsync(int orderId)
     {
-        using var transaction = await _dbContext.Database.BeginTransactionAsync();
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
         
-        try
+        return await strategy.ExecuteAsync(async () =>
         {
-            var orderItems = await _dbContext.OrderItems
-                .Include(oi => oi.Inventory)
-                .Where(oi => oi.OrderId == orderId)
-                .ToListAsync();
-
-            foreach (var orderItem in orderItems)
+            using var transaction = await _dbContext.Database.BeginTransactionAsync();
+            
+            try
             {
-                // Return reserved inventory back to available
-                orderItem.Inventory.AvailableQuantity += orderItem.Quantity;
-                orderItem.Inventory.ReservedQuantity -= orderItem.Quantity;
-                orderItem.Inventory.UpdatedAt = DateTime.UtcNow;
+                var orderItems = await _dbContext.OrderItems
+                    .Include(oi => oi.Inventory)
+                    .Where(oi => oi.OrderId == orderId)
+                    .ToListAsync();
+
+                foreach (var orderItem in orderItems)
+                {
+                    // Return reserved inventory back to available
+                    orderItem.Inventory.AvailableQuantity += orderItem.Quantity;
+                    orderItem.Inventory.ReservedQuantity -= orderItem.Quantity;
+                    orderItem.Inventory.UpdatedAt = DateTime.UtcNow;
+                }
+
+                await _dbContext.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                _logger.LogInformation("Successfully rolled back inventory reservation for Order {OrderId}", orderId);
+                return true;
             }
-
-            await _dbContext.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            _logger.LogInformation("Successfully rolled back inventory reservation for Order {OrderId}", orderId);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            await transaction.RollbackAsync();
-            _logger.LogError(ex, "Failed to rollback inventory reservation for Order {OrderId}", orderId);
-            return false;
-        }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                _logger.LogError(ex, "Failed to rollback inventory reservation for Order {OrderId}", orderId);
+                return false;
+            }
+        });
     }
 
     public async Task<List<Inventory>> GetAvailableProductsAsync()

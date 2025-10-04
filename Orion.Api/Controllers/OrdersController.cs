@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Orion.Api.Data;
 using Orion.Api.Models;
 using Orion.Api.Models.DTOs;
-using Orion.Api.Services;
+using Orion.Api.Services.CQRS.Commands;
+using Orion.Api.Services.CQRS.Queries;
+using MediatR;
 using System.Security.Claims;
 
 namespace Orion.Api.Controllers;
@@ -14,24 +14,14 @@ namespace Orion.Api.Controllers;
 [Authorize] // All endpoints require authentication
 public class OrdersController : ControllerBase
 {
-    private readonly OrionDbContext _dbContext;
-    private readonly IMessagePublisher _messagePublisher;
-    private readonly IInventoryService _inventoryService;
-    private readonly IEmailService _emailService; // ADD THIS LINE
+    private readonly IMediator _mediator;
     private readonly ILogger<OrdersController> _logger;
 
-
     public OrdersController(
-        OrionDbContext dbContext,
-        IMessagePublisher messagePublisher,
-        IInventoryService inventoryService,
-        IEmailService emailService, // ADD THIS LINE
+        IMediator mediator,
         ILogger<OrdersController> logger)
     {
-        _dbContext = dbContext;
-        _messagePublisher = messagePublisher;
-        _inventoryService = inventoryService;
-        _emailService = emailService; // ADD THIS LINE
+        _mediator = mediator;
         _logger = logger;
     }
 
@@ -48,54 +38,16 @@ public class OrdersController : ControllerBase
 
         try
         {
-            // STEP 1: Validate inventory availability
-            var inventoryCheck = await ValidateInventoryAsync(request.Items);
-            if (!inventoryCheck.IsValid)
-            {
-                return BadRequest(inventoryCheck.ErrorMessage);
-            }
-
-            // STEP 2: Reserve inventory
-            var reservationRequests = request.Items.Select(item => 
-                new InventoryReservationRequest(item.ProductSku, item.Quantity)).ToList();
+            var command = new CreateOrderCommand(userId, request.CustomerName, request.Items);
+            var result = await _mediator.Send(command);
             
-            var reservationResult = await _inventoryService.ReserveInventoryAsync(reservationRequests);
-            if (!reservationResult.Success)
-            {
-                return BadRequest($"Inventory reservation failed: {reservationResult.Message}");
-            }
-
-            // STEP 3: Create order with reserved inventory
-            var order = await CreateOrderWithItemsAsync(userId, request, inventoryCheck.InventoryItems);
-
-            // STEP 4: Update order status to InventoryReserved
-            order.Status = OrderStatus.InventoryReserved;
-            await _dbContext.SaveChangesAsync();
-
-            // STEP 5: Send order confirmation email
-            await SendOrderConfirmationEmailAsync(order, request.CustomerName);
-
-            // STEP 6: Publish enhanced event for background processing
-            var orderEvent = new OrderPlacedEvent(
-                order.Id,
-                userId,
-                request.CustomerName,
-                order.TotalAmount,
-                order.OrderItems.Select(oi => new OrderItemData(
-                    oi.ProductSku,
-                    oi.ProductName,
-                    oi.Quantity,
-                    oi.UnitPrice
-                )).ToList()
-            );
-
-            await _messagePublisher.PublishOrderPlacedAsync(orderEvent);
-
-            _logger.LogInformation("Order {OrderId} created successfully with inventory reserved and confirmation email sent", order.Id);
-
-
-            // STEP 7: Return order response
-            return Ok(MapToOrderResponse(order));
+            _logger.LogInformation("Order created successfully for user {UserId}", userId);
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning("Order creation failed for user {UserId}: {Error}", userId, ex.Message);
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
@@ -104,159 +56,77 @@ public class OrdersController : ControllerBase
         }
     }
 
-      // ADD THIS NEW METHOD:
-    private async Task SendOrderConfirmationEmailAsync(Order order, string customerName)
+    [HttpGet("{orderId}")]
+    public async Task<ActionResult<OrderResponse>> GetOrderById(int orderId)
     {
+        _logger.LogInformation("Getting order {OrderId}", orderId);
+
         try
         {
-            // For demo purposes, we'll use a demo email
-            // In production, you'd get the user's actual email from the database or JWT claims
-            var customerEmail = User.FindFirst(ClaimTypes.Email)?.Value ?? "customer@demo.com";
+            var query = new GetOrderByIdQuery(orderId);
+            var result = await _mediator.Send(query);
 
-            var orderEmailData = new OrderEmailData(
-                order.Id,
-                customerName,
-                order.TotalAmount,
-                order.CreatedAt,
-                order.OrderItems.Select(oi => new OrderItemResponse(
-                    oi.ProductName,
-                    oi.ProductSku,
-                    oi.UnitPrice,
-                    oi.Quantity,
-                    oi.TotalPrice
-                )).ToList(),
-                order.Status.ToString()
-            );
-
-            var emailSent = await _emailService.SendOrderConfirmationEmailAsync(
-                customerEmail, 
-                customerName, 
-                orderEmailData
-            );
-
-            if (emailSent)
+            if (result == null)
             {
-                _logger.LogInformation("✅ Order confirmation email sent successfully for Order {OrderId}", order.Id);
+                return NotFound($"Order {orderId} not found");
             }
-            else
-            {
-                _logger.LogWarning("⚠️ Failed to send order confirmation email for Order {OrderId}", order.Id);
-            }
+
+            return Ok(result);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error sending order confirmation email for Order {OrderId}", order.Id);
-            // Don't fail the order creation if email fails
+            _logger.LogError(ex, "Failed to get order {OrderId}", orderId);
+            return StatusCode(500, "An error occurred while retrieving the order");
         }
     }
 
-    [HttpGet("{id}")]
-    public async Task<ActionResult<OrderResponse>> GetOrder(int id)
+    [HttpGet("my-orders")]
+    public async Task<ActionResult<List<OrderResponse>>> GetMyOrders([FromQuery] int skip = 0, [FromQuery] int take = 20)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
-        var order = await _dbContext.Orders
-            .Include(o => o.OrderItems)
-            .ThenInclude(oi => oi.Inventory)
-            .FirstOrDefaultAsync(o => o.Id == id && o.UserId == userId);
-
-        if (order == null)
+        if (string.IsNullOrEmpty(userId))
         {
-            return NotFound($"Order {id} not found");
+            return Unauthorized("User ID not found in token");
         }
 
-        return Ok(MapToOrderResponse(order));
-    }
+        _logger.LogInformation("Getting orders for user {UserId} (Skip: {Skip}, Take: {Take})", userId, skip, take);
 
-    [HttpGet("inventory")]
-    public async Task<ActionResult<List<Inventory>>> GetAvailableProducts()
-    {
-        var products = await _inventoryService.GetAvailableProductsAsync();
-        return Ok(products);
-    }
-
-    // PRIVATE HELPER METHODS
-
-    private async Task<(bool IsValid, string? ErrorMessage, List<Inventory> InventoryItems)> ValidateInventoryAsync(List<OrderItemRequest> items)
-    {
-        var inventoryItems = new List<Inventory>();
-
-        foreach (var item in items)
+        try
         {
-            var product = await _inventoryService.GetProductBySkuAsync(item.ProductSku);
-            if (product == null)
-            {
-                return (false, $"Product with SKU '{item.ProductSku}' not found", inventoryItems);
-            }
+            var query = new GetOrdersByUserQuery(userId, skip, take);
+            var result = await _mediator.Send(query);
 
-            if (!await _inventoryService.IsProductAvailableAsync(item.ProductSku, item.Quantity))
-            {
-                return (false, $"Insufficient stock for product '{item.ProductSku}'. Available: {product.AvailableQuantity}, Requested: {item.Quantity}", inventoryItems);
-            }
-
-            inventoryItems.Add(product);
+            return Ok(result);
         }
-
-        return (true, null, inventoryItems);
-    }
-
-    private async Task<Order> CreateOrderWithItemsAsync(string userId, CreateOrderRequest request, List<Inventory> inventoryItems)
-    {
-        var order = new Order
+        catch (Exception ex)
         {
-            UserId = userId,
-            CustomerName = request.CustomerName,
-            Status = OrderStatus.Pending,
-            CreatedAt = DateTime.UtcNow,
-            OrderItems = new List<OrderItem>()
-        };
-
-        decimal totalAmount = 0;
-
-        for (int i = 0; i < request.Items.Count; i++)
-        {
-            var requestItem = request.Items[i];
-            var inventory = inventoryItems[i];
-
-            var orderItem = new OrderItem
-            {
-                Order = order,
-                InventoryId = inventory.Id,
-                Inventory = inventory,
-                ProductName = inventory.ProductName,
-                ProductSku = inventory.ProductSku,
-                UnitPrice = inventory.Price,
-                Quantity = requestItem.Quantity
-            };
-
-            order.OrderItems.Add(orderItem);
-            totalAmount += orderItem.TotalPrice;
+            _logger.LogError(ex, "Failed to get orders for user {UserId}", userId);
+            return StatusCode(500, "An error occurred while retrieving orders");
         }
-
-        order.TotalAmount = totalAmount;
-
-        _dbContext.Orders.Add(order);
-        await _dbContext.SaveChangesAsync();
-
-        return order;
     }
 
-    private static OrderResponse MapToOrderResponse(Order order)
+    [HttpPatch("{orderId}/status")]
+    public async Task<ActionResult> ChangeOrderStatus(int orderId, [FromBody] ChangeOrderStatusRequest request)
     {
-        return new OrderResponse(
-            order.Id,
-            order.UserId,
-            order.CustomerName,
-            order.TotalAmount,
-            order.Status.ToString(),
-            order.CreatedAt,
-            order.OrderItems.Select(oi => new OrderItemResponse(
-                oi.ProductName,
-                oi.ProductSku,
-                oi.UnitPrice,
-                oi.Quantity,
-                oi.TotalPrice
-            )).ToList()
-        );
+        _logger.LogInformation("Changing status for order {OrderId} to {Status}", orderId, request.NewStatus);
+
+        try
+        {
+            var command = new ChangeOrderStatusCommand(orderId, request.NewStatus, request.Reason);
+            await _mediator.Send(command);
+
+            _logger.LogInformation("Order {OrderId} status changed to {Status}", orderId, request.NewStatus);
+            return Ok(new { message = "Order status updated successfully" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning("Failed to change order {OrderId} status: {Error}", orderId, ex.Message);
+            return BadRequest(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to change order {OrderId} status", orderId);
+            return StatusCode(500, "An error occurred while updating the order status");
+        }
     }
 }

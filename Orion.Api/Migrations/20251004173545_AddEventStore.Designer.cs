@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Orion.Api.Data;
@@ -11,9 +12,11 @@ using Orion.Api.Data;
 namespace Orion.Api.Migrations
 {
     [DbContext(typeof(OrionDbContext))]
-    partial class OrionDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251004173545_AddEventStore")]
+    partial class AddEventStore
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -335,182 +338,6 @@ namespace Orion.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("Users");
-                });
-
-            modelBuilder.Entity("Orion.Api.ReadModels.OrderDetailView", b =>
-                {
-                    b.Property<int>("OrderId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("OrderId"));
-
-                    b.Property<TimeSpan>("Age")
-                        .HasColumnType("interval");
-
-                    b.Property<string>("AgeDisplay")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CustomerName")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<DateTime?>("LastUpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("OrderItemsJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("StatusHistoryJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<decimal>("TotalAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.HasKey("OrderId");
-
-                    b.HasIndex("CreatedAt");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("OrderDetailViews");
-                });
-
-            modelBuilder.Entity("Orion.Api.ReadModels.OrderSummaryView", b =>
-                {
-                    b.Property<int>("OrderId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("OrderId"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CustomerName")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<string>("FormattedAmount")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<bool>("IsCompleted")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsFailed")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsPending")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("ItemCount")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("LastUpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("SearchText")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("StatusDisplay")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<decimal>("TotalAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.HasKey("OrderId");
-
-                    b.HasIndex("CreatedAt");
-
-                    b.HasIndex("SearchText");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("OrderSummaryViews");
-                });
-
-            modelBuilder.Entity("Orion.Api.ReadModels.UserOrderHistoryView", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CustomerName")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<string>("FormattedAmount")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<bool>("IsRecent")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("ItemCount")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("LastUpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("OrderId")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("TotalAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("UserId", "CreatedAt");
-
-                    b.ToTable("UserOrderHistoryViews");
                 });
 
             modelBuilder.Entity("Orion.Api.Models.EmailDeliveryAttempt", b =>

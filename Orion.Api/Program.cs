@@ -87,6 +87,23 @@ builder.Services.AddSingleton<IMessagePublisher, RabbitMqPublisher>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
 builder.Services.AddScoped<IEmailService, SimpleEmailService>();
 
+// Event Sourcing Services
+builder.Services.AddScoped<Orion.Api.Services.EventSourcing.IEventStore, Orion.Api.Services.EventSourcing.EventStore>();
+
+Console.WriteLine("✅ Event Sourcing services registered");
+
+// CQRS with MediatR
+builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
+
+// Projection Services for Read Models
+builder.Services.AddScoped<Orion.Api.Projections.IProjectionService, Orion.Api.Projections.ProjectionService>();
+builder.Services.AddScoped<Orion.Api.Projections.IProjectionHandler<Orion.Api.Models.Events.OrderCreatedEvent>, Orion.Api.Projections.OrderProjectionHandler>();
+builder.Services.AddScoped<Orion.Api.Projections.IProjectionHandler<Orion.Api.Models.Events.OrderStatusChangedEvent>, Orion.Api.Projections.OrderProjectionHandler>();
+builder.Services.AddScoped<Orion.Api.Projections.IProjectionHandler<Orion.Api.Models.Events.OrderCompletedEvent>, Orion.Api.Projections.OrderProjectionHandler>();
+builder.Services.AddScoped<Orion.Api.Projections.IProjectionHandler<Orion.Api.Models.Events.OrderFailedEvent>, Orion.Api.Projections.OrderProjectionHandler>();
+
+Console.WriteLine("✅ CQRS and Projection services registered");
+
 // API Documentation
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
