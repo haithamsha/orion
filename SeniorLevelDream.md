@@ -16,7 +16,7 @@ These items are essential for security, stability, and observability in a produc
   - **Goal:** Move from transient console logs to a persistent, searchable, and centralized logging platform.
   - **Implementation:** Integrate **Serilog** for structured JSON logging. Configure a "sink" to send logs to a platform like **Datadog**, **Splunk**, the **ELK Stack**, or **Seq** for local development.
 
-- [ ] **3. Resilience and Transient Fault Handling**
+- [x] **3. Resilience and Transient Fault Handling**
   - **Goal:** Make the application resilient to temporary network failures when communicating with external services.
   - **Implementation:** Integrate the **Polly** library to add **Retry** policies for database/RabbitMQ connections and **Circuit Breaker** policies for external API calls.
 
@@ -24,7 +24,7 @@ These items are essential for security, stability, and observability in a produc
 
 With a hardened core, we can focus on scalability, performance, and maintainability.
 
-- [ ] **4. Worker Service and Message Queue Robustness**
+- [x] **4. Worker Service and Message Queue Robustness**
   - **Goal:** Prevent message loss and processing bottlenecks in our background worker.
   - **Implementation:** Configure a **Dead-Letter Queue (DLQ)** in RabbitMQ to handle poison messages. Ensure all message handlers are **idempotent**.
 

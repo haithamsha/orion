@@ -30,14 +30,24 @@ public class OrderProcessorWorker : BackgroundService
         _connection = factory.CreateConnectionAsync().GetAwaiter().GetResult();
         _channel = _connection.CreateChannelAsync().GetAwaiter().GetResult();
 
-        // 2. Ensure the exchange exists
+        // 2. Declare exchanges
         _channel.ExchangeDeclareAsync(exchange: "order-events", type: ExchangeType.Fanout).GetAwaiter().GetResult();
+        _channel.ExchangeDeclareAsync(exchange: "order-events-dlx", type: ExchangeType.Fanout).GetAwaiter().GetResult(); // Dead-letter exchange
 
-        // 3. Declare a queue to consume messages from
+        // 3. Declare DLQ and bind it
+        var dlqName = "order-processing-dlq";
+        _channel.QueueDeclareAsync(queue: dlqName, durable: true, exclusive: false, autoDelete: false, arguments: null).GetAwaiter().GetResult();
+        _channel.QueueBindAsync(queue: dlqName, exchange: "order-events-dlx", routingKey: "").GetAwaiter().GetResult();
+
+        // 4. Declare the main queue with DLX argument
         var queueName = "order-processing-queue";
-        _channel.QueueDeclareAsync(queue: queueName, durable: true, exclusive: false, autoDelete: false, arguments: null).GetAwaiter().GetResult();
+        var arguments = new Dictionary<string, object?>
+        {
+            { "x-dead-letter-exchange", "order-events-dlx" }
+        };
+        _channel.QueueDeclareAsync(queue: queueName, durable: true, exclusive: false, autoDelete: false, arguments: arguments).GetAwaiter().GetResult();
 
-        // 4. Bind the queue to the exchange.
+        // 5. Bind the main queue to the exchange
         _channel.QueueBindAsync(queue: queueName, exchange: "order-events", routingKey: "").GetAwaiter().GetResult();
     }
 
@@ -63,9 +73,9 @@ public class OrderProcessorWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to process Order ID {OrderId}", orderEvent!.OrderId);
-                // We still acknowledge the message to prevent it from being re-processed indefinitely.
-                await _channel.BasicAckAsync(deliveryTag: ea.DeliveryTag, multiple: false);
+                _logger.LogError(ex, "Failed to process Order ID {OrderId}. Rejecting message and sending to DLQ.", orderEvent!.OrderId);
+                // 7. Reject the message and send to DLQ
+                await _channel.BasicNackAsync(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
             }
         };
 
