@@ -12,7 +12,7 @@ These items are essential for security, stability, and observability in a produc
   - **Goal:** Securely manage production secrets (database connection strings, API keys) outside of source control.
   - **Implementation:** Integrate a secure secret vault (e.g., Azure Key Vault, AWS Secrets Manager, or HashiCorp Vault) by extending the `ISecretsManagerService`.
 
-- [ ] **2. Centralized and Structured Logging**
+- [x] **2. Centralized and Structured Logging**
   - **Goal:** Move from transient console logs to a persistent, searchable, and centralized logging platform.
   - **Implementation:** Integrate **Serilog** for structured JSON logging. Configure a "sink" to send logs to a platform like **Datadog**, **Splunk**, the **ELK Stack**, or **Seq** for local development.
 

@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using RabbitMQ.Client;
 using Orion.Api.Models;
+using Serilog;
 
 namespace Orion.Api.Services;
 
@@ -30,7 +31,7 @@ public class RabbitMqPublisher : IMessagePublisher
             routingKey: "",
             body: body).GetAwaiter().GetResult();
 
-        Console.WriteLine($"--> Published Message: {json}");
+        Log.Information("--> Published Message: {json}", json);
     }
 
     // NEW: Add this method for the OrderPlacedEvent
@@ -46,6 +47,6 @@ public class RabbitMqPublisher : IMessagePublisher
             routingKey: "",
             body: body);
 
-        Console.WriteLine($"--> Published OrderPlacedEvent: {json}");
+        Log.Information("--> Published OrderPlacedEvent: {json}", json);
     }
 }
