@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -14,6 +15,7 @@ public class EventStoreTests : IDisposable
     private readonly OrionDbContext _context;
     private readonly EventStore _eventStore;
     private readonly Mock<ILogger<EventStore>> _mockLogger;
+    private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
 
     public EventStoreTests()
     {
@@ -26,7 +28,8 @@ public class EventStoreTests : IDisposable
         _context.Database.EnsureCreated();
 
         _mockLogger = new Mock<ILogger<EventStore>>();
-        _eventStore = new EventStore(_context, _mockLogger.Object);
+        _httpContextAccessorMock = new Mock<IHttpContextAccessor>();
+        _eventStore = new EventStore(_context, _mockLogger.Object, _httpContextAccessorMock.Object);
     }
 
     [Fact]

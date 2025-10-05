@@ -10,11 +10,11 @@ using Xunit;
 
 namespace Orion.Api.Tests.Integration;
 
-public class EventSourcingIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
+public class EventSourcingIntegrationTests : IClassFixture<CustomWebApplicationFactory<Program>>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly CustomWebApplicationFactory<Program> _factory;
 
-    public EventSourcingIntegrationTests(WebApplicationFactory<Program> factory)
+    public EventSourcingIntegrationTests(CustomWebApplicationFactory<Program> factory)
     {
         _factory = factory;
     }
@@ -31,15 +31,16 @@ public class EventSourcingIntegrationTests : IClassFixture<WebApplicationFactory
         var baseItem = new OrderItemData("ITEM-001", "Test Item", 2, 10.50m);
         var orderItems = new List<OrderItemDataDetailed>
         {
-            new OrderItemDataDetailed(baseItem, Guid.NewGuid())
+            new(baseItem, Guid.NewGuid())
         };
         
         // Create an order aggregate and generate events
         var orderAggregate = OrderAggregate.CreateNew(
             aggregateId,
-            "user123",
+            "test-user-123", // Use the authenticated user
             21.00m, // totalAmount: 2 * 10.50
-            orderItems
+            orderItems,
+            triggeredByUserId: "test-user-123"
         );
 
         // Act - Save events to database
@@ -54,7 +55,7 @@ public class EventSourcingIntegrationTests : IClassFixture<WebApplicationFactory
         Assert.Single(eventsInDb);
         Assert.Equal("OrderCreatedEvent", eventsInDb[0].EventType);
         Assert.Equal(1, eventsInDb[0].AggregateVersion);
-        Assert.Equal("user123", eventsInDb[0].UserId);
+        Assert.Equal("test-user-123", eventsInDb[0].UserId); // Assert against the correct user
         Assert.Contains("ITEM-001", eventsInDb[0].EventData);
     }
 
@@ -69,11 +70,11 @@ public class EventSourcingIntegrationTests : IClassFixture<WebApplicationFactory
         var baseItem = new OrderItemData("ITEM-002", "Test Item 2", 1, 25.00m);
         var orderItems = new List<OrderItemDataDetailed>
         {
-            new OrderItemDataDetailed(baseItem, Guid.NewGuid())
+            new(baseItem, Guid.NewGuid())
         };
         
         // Create and persist initial order
-        var originalOrder = OrderAggregate.CreateNew(aggregateId, "user456", 25.00m, orderItems);
+        var originalOrder = OrderAggregate.CreateNew(aggregateId, "test-user-123", 25.00m, orderItems);
         await eventStore.SaveEventsAsync(aggregateId, originalOrder.GetUncommittedEvents(), 0);
         
         // Perform some business operations
@@ -93,7 +94,7 @@ public class EventSourcingIntegrationTests : IClassFixture<WebApplicationFactory
         Assert.Equal(aggregateId, reconstructedOrder.Id);
         Assert.Equal(OrderStatus.Completed, reconstructedOrder.Status);
         Assert.Equal(3, reconstructedOrder.Version);
-        Assert.Equal("user456", reconstructedOrder.CustomerUserId);
+        Assert.Equal("test-user-123", reconstructedOrder.CustomerUserId);
         Assert.Single(reconstructedOrder.Items);
         Assert.Equal("ITEM-002", reconstructedOrder.Items.First().ProductSku);
     }
@@ -111,16 +112,16 @@ public class EventSourcingIntegrationTests : IClassFixture<WebApplicationFactory
         
         // Create first order
         var baseItem1 = new OrderItemData("SKU-1", "Product 1", 1, 15.00m);
-        var order1 = OrderAggregate.CreateNew(order1Id, "user789", 15.00m, new List<OrderItemDataDetailed>
+        var order1 = OrderAggregate.CreateNew(order1Id, "test-user-123", 15.00m, new List<OrderItemDataDetailed>
         {
-            new OrderItemDataDetailed(baseItem1, Guid.NewGuid())
+            new(baseItem1, Guid.NewGuid())
         });
         
         // Create second order
         var baseItem2 = new OrderItemData("SKU-2", "Product 2", 3, 8.50m);
-        var order2 = OrderAggregate.CreateNew(order2Id, "user101", 25.50m, new List<OrderItemDataDetailed>
+        var order2 = OrderAggregate.CreateNew(order2Id, "test-user-456", 25.50m, new List<OrderItemDataDetailed>
         {
-            new OrderItemDataDetailed(baseItem2, Guid.NewGuid())
+            new(baseItem2, Guid.NewGuid())
         });
 
         // Act - Save both orders

@@ -84,12 +84,12 @@ public record OrderStatusChangedEvent : BaseEvent
     public string? Reason { get; init; }
 
     public OrderStatusChangedEvent(
-        Guid orderId, 
+        Guid orderId,
         int aggregateVersion,
-        OrderStatus previousStatus, 
-        OrderStatus newStatus, 
+        OrderStatus previousStatus,
+        OrderStatus newStatus,
         string? reason = null,
-        string? triggeredByUserId = null) 
+        string? triggeredByUserId = null)
         : base(orderId, aggregateVersion, triggeredByUserId)
     {
         PreviousStatus = previousStatus;

@@ -159,6 +159,7 @@ public class CreateOrderCommandHandler : ICommandHandler<CreateOrderCommand, Ord
     {
         var order = new Order
         {
+            AggregateId = eventSourcedOrderId,
             UserId = userId,
             CustomerName = request.CustomerName,
             Status = OrderStatus.Pending,

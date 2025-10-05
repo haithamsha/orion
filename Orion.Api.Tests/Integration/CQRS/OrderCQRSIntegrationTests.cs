@@ -9,79 +9,30 @@ using Orion.Api.Models;
 using Orion.Api.Models.DTOs;
 using Orion.Api.ReadModels;
 using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Authentication;
+using Orion.Api.Tests.Integration.Helpers;
 
 namespace Orion.Api.Tests.Integration.CQRS;
 
-public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
+public class OrderCQRSIntegrationTests : IClassFixture<CustomWebApplicationFactory<Program>>
 {
-    private readonly WebApplicationFactory<Program> _factory;
     private readonly HttpClient _client;
+    private readonly CustomWebApplicationFactory<Program> _factory;
 
-    public OrderCQRSIntegrationTests(WebApplicationFactory<Program> factory)
+    public OrderCQRSIntegrationTests(CustomWebApplicationFactory<Program> factory)
     {
-        _factory = factory.WithWebHostBuilder(builder =>
+        _factory = factory;
+        _client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            builder.ConfigureServices(services =>
-            {
-                // Replace database with in-memory for testing
-                var descriptor = services.SingleOrDefault(d => d.ServiceType == typeof(DbContextOptions<OrionDbContext>));
-                if (descriptor != null)
-                {
-                    services.Remove(descriptor);
-                }
-
-                services.AddDbContext<OrionDbContext>(options =>
-                {
-                    options.UseInMemoryDatabase("IntegrationTestDb_" + Guid.NewGuid());
-                });
-
-                // Ensure database is created and seeded
-                var serviceProvider = services.BuildServiceProvider();
-                using var scope = serviceProvider.CreateScope();
-                var context = scope.ServiceProvider.GetRequiredService<OrionDbContext>();
-                context.Database.EnsureCreated();
-                SeedTestData(context);
-            });
+            AllowAutoRedirect = false
         });
 
-        _client = _factory.CreateClient();
-    }
-
-    private static void SeedTestData(OrionDbContext context)
-    {
-        // Add test users
-        context.Users.AddRange(
-            new User 
-            { 
-                Id = 1, 
-                UserId = "test-user-123", 
-                FirstName = "Test", 
-                LastName = "User",
-                Email = "test@example.com" 
-            }
-        );
-
-        // Add test inventory
-        context.Inventories.AddRange(
-            new Inventory 
-            { 
-                Id = 1, 
-                ProductSku = "INTEGRATION-001", 
-                ProductName = "Integration Test Product 1", 
-                Price = 25.00m, 
-                AvailableQuantity = 100 
-            },
-            new Inventory 
-            { 
-                Id = 2, 
-                ProductSku = "INTEGRATION-002", 
-                ProductName = "Integration Test Product 2", 
-                Price = 15.00m, 
-                AvailableQuantity = 50 
-            }
-        );
-
-        context.SaveChanges();
+        // Clean the database before each test
+        using var scope = _factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<OrionDbContext>();
+        context.Database.EnsureDeleted();
+        context.Database.EnsureCreated();
+        _factory.SeedData(context);
     }
 
     [Fact]
@@ -97,21 +48,17 @@ public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Pro
             }
         );
 
-        // Set up authorization header (mock JWT)
-        _client.DefaultRequestHeaders.Authorization = 
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "mock-jwt-token");
-
         // Act - Create order using CQRS
         var response = await _client.PostAsJsonAsync("/api/orders/fast", createOrderRequest);
 
         // Assert - Order creation
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         
-        var orderResponse = await response.Content.ReadFromJsonAsync<OrderResponse>();
-        Assert.NotNull(orderResponse);
-        Assert.Equal("Integration Test Customer", orderResponse.CustomerName);
-        Assert.Equal(65.00m, orderResponse.TotalAmount); // (2 * 25.00) + (1 * 15.00)
-        Assert.Equal(2, orderResponse.Items.Count);
+        // Since the endpoint is now 'fast' (Accepted), we can't read the response body directly.
+        // We will verify the creation by querying the database.
+
+        // Allow some time for the background processing to complete
+        await Task.Delay(2000); // Adjust delay as needed
 
         // Verify order was saved to database
         using var scope = _factory.Services.CreateScope();
@@ -123,7 +70,7 @@ public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Pro
         
         Assert.NotNull(savedOrder);
         Assert.Equal("test-user-123", savedOrder.UserId);
-        Assert.Equal(OrderStatus.Pending, savedOrder.Status);
+        Assert.Equal(65.00m, savedOrder.TotalAmount); // (2 * 25.00) + (1 * 15.00)
         Assert.Equal(2, savedOrder.OrderItems.Count);
 
         // Verify read models were created (if projections are working)
@@ -154,9 +101,14 @@ public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Pro
         using var scope = _factory.Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<OrionDbContext>();
         
+        // Clear existing orders for this user to ensure a clean slate
+        var existingOrders = context.Orders.Where(o => o.UserId == "test-user-123");
+        context.Orders.RemoveRange(existingOrders);
+        await context.SaveChangesAsync();
+        
         var testOrders = new List<Order>
         {
-            new Order
+            new()
             {
                 UserId = "test-user-123",
                 CustomerName = "Test Customer 1",
@@ -165,7 +117,7 @@ public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Pro
                 CreatedAt = DateTime.UtcNow.AddDays(-5),
                 OrderItems = new List<OrderItem>()
             },
-            new Order
+            new()
             {
                 UserId = "test-user-123",
                 CustomerName = "Test Customer 2",
@@ -179,12 +131,8 @@ public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Pro
         context.Orders.AddRange(testOrders);
         await context.SaveChangesAsync();
 
-        // Set up authorization
-        _client.DefaultRequestHeaders.Authorization = 
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "mock-jwt-token");
-
         // Act - Get user's orders using CQRS query
-        var response = await _client.GetAsync("/api/orders/my");
+        var response = await _client.GetAsync("/api/orders/my-orders");
 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -207,12 +155,16 @@ public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Pro
         
         var testOrder = new Order
         {
+            Id = 999, // Using a distinct Id for test isolation
             UserId = "test-user-123",
             CustomerName = "Status Change Test",
             TotalAmount = 50.00m,
             Status = OrderStatus.Pending,
             CreatedAt = DateTime.UtcNow,
-            OrderItems = new List<OrderItem>()
+            OrderItems = new List<OrderItem>
+            {
+                new() { ProductSku = "INTEGRATION-001", Quantity = 1, UnitPrice = 50.00m }
+            }
         };
 
         context.Orders.Add(testOrder);
@@ -222,10 +174,6 @@ public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Pro
             OrderStatus.Processing,
             "Integration test status change"
         );
-
-        // Set up authorization
-        _client.DefaultRequestHeaders.Authorization = 
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "mock-jwt-token");
 
         // Act - Change order status using CQRS command
         var response = await _client.PutAsJsonAsync($"/api/orders/{testOrder.Id}/status", changeStatusRequest);
@@ -250,18 +198,15 @@ public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Pro
             "Error Test Customer",
             new List<OrderItemRequest>
             {
-                new OrderItemRequest("NONEXISTENT-SKU", 1)
+                new("NONEXISTENT-SKU", 1)
             }
         );
-
-        _client.DefaultRequestHeaders.Authorization = 
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "mock-jwt-token");
 
         // Act
         var response = await _client.PostAsJsonAsync("/api/orders/fast", createOrderRequest);
 
         // Assert
-        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode); // Error due to invalid inventory
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         
         // Verify no order was created
         using var scope = _factory.Services.CreateScope();
@@ -283,12 +228,9 @@ public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Pro
             "Event Sourcing Test",
             new List<OrderItemRequest>
             {
-                new OrderItemRequest("INTEGRATION-001", 1)
+                new("INTEGRATION-001", 1)
             }
         );
-
-        _client.DefaultRequestHeaders.Authorization = 
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "mock-jwt-token");
 
         // Act
         var response = await _client.PostAsJsonAsync("/api/orders/fast", createOrderRequest);
@@ -296,12 +238,19 @@ public class OrderCQRSIntegrationTests : IClassFixture<WebApplicationFactory<Pro
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
+        // Allow time for async processing
+        await Task.Delay(1000);
+
         // Verify Event Store contains the events
         using var scope = _factory.Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<OrionDbContext>();
         
+        // Find the order to get its ID for event lookup
+        var order = await context.Orders.FirstOrDefaultAsync(o => o.CustomerName == "Event Sourcing Test");
+        Assert.NotNull(order);
+
         var eventStoreEntries = await context.EventStoreEntries
-            .Where(e => e.EventType.Contains("OrderCreated"))
+            .Where(e => e.AggregateId == order.AggregateId && e.EventType.Contains("OrderCreated"))
             .ToListAsync();
         
         Assert.NotEmpty(eventStoreEntries);

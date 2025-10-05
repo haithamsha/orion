@@ -3,6 +3,8 @@ using Orion.Api.Data;
 using Orion.Api.Models;
 using Orion.Api.Models.Events;
 using System.Text.Json;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 
 namespace Orion.Api.Services.EventSourcing;
 
@@ -13,12 +15,14 @@ namespace Orion.Api.Services.EventSourcing;
 public class EventStore : IEventStore
 {
     private readonly OrionDbContext _context;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
     private readonly ILogger<EventStore> _logger;
 
-    public EventStore(OrionDbContext context, ILogger<EventStore> logger)
+    public EventStore(OrionDbContext context, ILogger<EventStore> logger, IHttpContextAccessor? httpContextAccessor = null)
     {
         _context = context;
         _logger = logger;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     /// <summary>
@@ -42,6 +46,8 @@ public class EventStore : IEventStore
             throw new ConcurrencyException(aggregateId, expectedVersion, currentVersion);
         }
 
+        var userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+
         // Convert domain events to database entities
         var eventEntries = eventsList.Select(evt => new EventStoreEntry
         {
@@ -51,7 +57,7 @@ public class EventStore : IEventStore
             EventType = evt.EventType,
             EventData = JsonSerializer.Serialize(evt, evt.GetType()),
             OccurredAt = evt.OccurredAt,
-            UserId = evt.UserId,
+            UserId = userId ?? evt.UserId,
             CreatedAt = DateTime.UtcNow
         }).ToList();
 

@@ -105,7 +105,7 @@ public class OrdersController : ControllerBase
         }
     }
 
-    [HttpPatch("{orderId}/status")]
+    [HttpPut("{orderId}/status")]
     public async Task<ActionResult> ChangeOrderStatus(int orderId, [FromBody] ChangeOrderStatusRequest request)
     {
         _logger.LogInformation("Changing status for order {OrderId} to {Status}", orderId, request.NewStatus);
@@ -116,7 +116,7 @@ public class OrdersController : ControllerBase
             await _mediator.Send(command);
 
             _logger.LogInformation("Order {OrderId} status changed to {Status}", orderId, request.NewStatus);
-            return Ok(new { message = "Order status updated successfully" });
+            return NoContent();
         }
         catch (InvalidOperationException ex)
         {

@@ -86,6 +86,7 @@ builder.Services.AddOrionCors(config);
 builder.Services.AddSingleton<IMessagePublisher, RabbitMqPublisher>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
 builder.Services.AddScoped<IEmailService, SimpleEmailService>();
+builder.Services.AddHttpContextAccessor();
 
 // Event Sourcing Services
 builder.Services.AddScoped<Orion.Api.Services.EventSourcing.IEventStore, Orion.Api.Services.EventSourcing.EventStore>();

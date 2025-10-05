@@ -117,28 +117,23 @@ public class OrderAggregate : AggregateRoot
     /// <summary>
     /// Change the status of the order
     /// </summary>
-    public void ChangeStatus(OrderStatus newStatus, string? reason = null, string? triggeredByUserId = null)
+    public void ChangeStatus(OrderStatus newStatus, string? reason = null)
     {
-        if (Status == newStatus)
-        {
-            return; // No change needed
-        }
-
-        // Business rules
         if (Status == OrderStatus.Completed || Status == OrderStatus.Failed)
         {
-            throw new InvalidOperationException($"Cannot change status of {Status} order");
+            throw new InvalidOperationException($"Cannot change status from {Status} to {newStatus}.");
         }
 
-        var @event = new OrderStatusChangedEvent(
-            Id,
-            Version + 1,
-            Status,
-            newStatus,
-            reason,
-            triggeredByUserId);
-
+        var @event = new OrderStatusChangedEvent(Id, Version + 1, Status, newStatus, reason, CustomerUserId);
         ApplyChange(@event);
+    }
+
+    public void SetUserId(string userId)
+    {
+        if (string.IsNullOrEmpty(CustomerUserId))
+        {
+            CustomerUserId = userId;
+        }
     }
 
     /// <summary>
@@ -234,6 +229,7 @@ public class OrderAggregate : AggregateRoot
             case OrderProcessingStartedEvent processingStarted:
                 Apply(processingStarted);
                 break;
+
             default:
                 throw new ArgumentException($"Unknown event type: {@event.GetType().Name}");
         }
