@@ -12,11 +12,12 @@ public class SimpleEmailService : IEmailService
     private readonly string _fromName;
 
     public SimpleEmailService(
+        HttpClient httpClient,
         IConfiguration configuration,
         ILogger<SimpleEmailService> logger)
     {
         var apiKey = configuration["SendGrid:ApiKey"] ?? "DEMO_API_KEY";
-        _sendGridClient = new SendGridClient(apiKey);
+        _sendGridClient = new SendGridClient(httpClient, apiKey);
         _logger = logger;
         _fromEmail = configuration["Email:FromEmail"] ?? "orders@orion.com";
         _fromName = configuration["Email:FromName"] ?? "Orion Team";

@@ -63,6 +63,7 @@ try
                 errorCodesToAdd: null);
         }));
     builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
+    builder.Services.AddSignalR();
 
     // Business Services
     builder.Services.AddSingleton<Orion.Api.Services.IMessagePublisher, Orion.Api.Services.RabbitMqPublisher>();
@@ -99,6 +100,7 @@ try
     app.UseAuthorization();
 
     app.MapControllers();
+    app.MapHub<Orion.Api.Hubs.OrderStatusHub>("/order-status-hub");
 
     Log.Information("✅ Orion Backend is ready to handle requests!");
     Log.Information("🚀 Started at: {StartupTime} UTC", DateTime.UtcNow);
