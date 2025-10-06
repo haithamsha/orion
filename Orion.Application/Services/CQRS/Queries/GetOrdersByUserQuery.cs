@@ -1,5 +1,5 @@
 using Orion.Application.Services.CQRS;
-using Orion.Domain.DTOs;
+using Orion.Application.DTOs;
 
 namespace Orion.Application.Services.CQRS.Queries;
 

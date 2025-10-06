@@ -1,7 +1,9 @@
-using Orion.Domain.Events;
+// Temporarily commented out for refactoring
+// using Orion.Domain.Events;
 
 namespace Orion.Application.Interfaces;
 
+/*
 /// <summary>
 /// Interface for the Event Store - responsible for persisting and retrieving events
 /// </summary>
@@ -31,3 +33,4 @@ public interface IEventStore
     /// <returns>The current version, or 0 if no events exist</returns>
     Task<int> GetCurrentVersionAsync(Guid aggregateId);
 }
+*/
