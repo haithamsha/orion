@@ -2,7 +2,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Orion.Domain\Orion.Domain.csproj" />
-    <ProjectReference Include="..\Orion.Application\Orion.Application.csproj" />
   </ItemGroup>
 
   <ItemGroup>
