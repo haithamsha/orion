@@ -2,8 +2,8 @@ using System.Text;
 using System.Text.Json;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
-using Orion.Api.Data;
-using Orion.Api.Models;
+using Orion.Infrastructure.Data;
+using Orion.Domain.Models;
 using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 

@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Orion.Worker;
-using Orion.Api.Data;
+using Orion.Infrastructure.Data;
 
 var host = Host.CreateDefaultBuilder(args)
     .ConfigureServices((hostContext, services) =>
