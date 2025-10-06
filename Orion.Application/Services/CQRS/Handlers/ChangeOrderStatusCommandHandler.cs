@@ -1,10 +1,11 @@
-using Orion.Api.Services.CQRS;
-using Orion.Api.Services.CQRS.Commands;
-using Orion.Api.Data;
-using Orion.Api.Models;
+using Orion.Application.Services.CQRS;
+using Orion.Application.Services.CQRS.Commands;
+using Orion.Infrastructure.Data;
+using Orion.Domain.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
-namespace Orion.Api.Services.CQRS.Handlers;
+namespace Orion.Application.Services.CQRS.Handlers;
 
 /// <summary>
 /// Command handler for changing order status
