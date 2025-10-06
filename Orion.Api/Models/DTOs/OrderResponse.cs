@@ -1,0 +1,15 @@
+using System.ComponentModel.DataAnnotations;
+
+namespace Orion.Api.Models.DTOs;
+
+
+
+public record OrderResponse(
+    int OrderId,
+    string UserId,
+    string CustomerName,
+    decimal TotalAmount,
+    string Status,
+    DateTime CreatedAt,
+    List<OrderItemResponse> Items
+);
